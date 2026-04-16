@@ -1,0 +1,8 @@
+{
+  "name": "Game of SKATE MVP",
+  "description": "A real-time turn-based Game of SKATE app with video calling and trick tracking.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
