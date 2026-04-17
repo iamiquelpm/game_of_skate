@@ -3,22 +3,25 @@ import { Trophy, Play, Plus, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface LandingProps {
-  onJoin: (roomId: string, role: 'player' | 'spectator') => void;
+  onJoin: (roomId: string, role: 'player' | 'spectator', playerName: string) => void;
 }
 
 export default function Landing({ onJoin }: LandingProps) {
   const [code, setCode] = useState('');
+  const [name, setName] = useState('');
 
   const handleJoin = (e: React.FormEvent, role: 'player' | 'spectator' = 'player') => {
     e.preventDefault();
+    const finalName = name.trim() || 'Skater';
     if (code.trim()) {
-      onJoin(code.trim().toUpperCase(), role);
+      onJoin(code.trim().toUpperCase(), role, finalName);
     }
   };
 
   const createRoom = () => {
     const randomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
-    onJoin(randomCode, 'player');
+    const finalName = name.trim() || 'Skater';
+    onJoin(randomCode, 'player', finalName);
   };
 
   return (
@@ -40,6 +43,27 @@ export default function Landing({ onJoin }: LandingProps) {
         </div>
 
         <div className="space-y-8">
+          {/* Name Section */}
+          <div className="space-y-3">
+            <div className="relative">
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="YOUR NAME"
+                maxLength={12}
+                className="w-full px-6 py-5 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-white uppercase tracking-widest font-bold text-center placeholder:text-zinc-700"
+              />
+            </div>
+            <p className="text-[10px] text-zinc-600 uppercase font-black tracking-widest">Identify yourself for the battle</p>
+          </div>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t border-zinc-900"></span>
+            </div>
+          </div>
+
           {/* Create Section */}
           <div className="space-y-3">
             <button

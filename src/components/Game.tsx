@@ -24,20 +24,21 @@ import { cn } from '../lib/utils';
 interface GameProps {
   roomId: string;
   role: 'player' | 'spectator';
+  playerName: string;
   onLeave: () => void;
 }
 
 interface GameState {
   turn: number;
   letters: [string[], string[]];
-  phase: 'setting' | 'replicating' | 'evaluating';
+  phase: 'setting' | 'replicating' | 'evaluating' | 'intermission';
   timer: number;
   lastActionTime: number;
   message?: string | null;
   eAttempts: [number, number];
 }
 
-export default function Game({ roomId, role, onLeave }: GameProps) {
+export default function Game({ roomId, role, playerName, onLeave }: GameProps) {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [waiting, setWaiting] = useState(true);
@@ -45,6 +46,7 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [players, setPlayers] = useState<string[]>([]);
+  const [playerNames, setPlayerNames] = useState<{ [id: string]: string }>({});
   const [copied, setCopied] = useState(false);
 
   const isSpectator = role === 'spectator';
@@ -78,11 +80,12 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
     const newSocket = io();
     setSocket(newSocket);
 
-    newSocket.emit('join-room', { roomId, role });
+    newSocket.emit('join-room', { roomId, role, playerName });
 
-    newSocket.on('room-update', ({ players, gameState }) => {
+    newSocket.on('room-update', ({ players, playerNames, gameState }) => {
       console.log('Room update received:', { playersCount: players.length, gameState });
       setPlayers(players);
+      if (playerNames) setPlayerNames(playerNames);
       setGameState(gameState);
       if (players.length >= 2) {
         setWaiting(false);
@@ -91,16 +94,17 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
       }
     });
 
-    newSocket.on('game-start', ({ players, gameState }) => {
+    newSocket.on('game-start', ({ players, playerNames, gameState }) => {
       console.log('Game start received:', { playersCount: players.length });
       setWaiting(false);
       setPlayers(players);
+      if (playerNames) setPlayerNames(playerNames);
       setGameState(gameState);
     });
 
     newSocket.on('state-update', (newState) => {
       setGameState(newState);
-      setTimeLeft(30);
+      setTimeLeft(newState.timer);
     });
 
     newSocket.on('player-disconnected', () => {
@@ -123,6 +127,7 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
+        if (gameState.phase === 'intermission') return prev; // Server handles intermission timer
         if (prev <= 1) {
           const activePlayerIndex = gameState.phase === 'replicating' ? (1 - gameState.turn) : gameState.turn;
           if (socket && players[activePlayerIndex] === socket.id) {
@@ -251,12 +256,18 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
   const myIndex = players.indexOf(socket?.id || '');
   const isMyTurn = !isSpectator && gameState.turn === myIndex;
   const opponentIndex = isSpectator ? -1 : (1 - myIndex);
+  
+  const getPlayerName = (index: number) => {
+    const id = players[index];
+    return playerNames[id] || `Player ${index + 1}`;
+  };
+
   const winnerIndex = gameState.letters[0].length === 5 ? 1 : gameState.letters[1].length === 5 ? 0 : null;
 
   if (winnerIndex !== null) {
     const iWon = winnerIndex === myIndex;
     const winnerText = isSpectator 
-      ? `Player ${winnerIndex + 1} Won!` 
+      ? `${getPlayerName(winnerIndex)} Won!` 
       : (iWon ? 'You Won!' : 'You Lost!');
 
     return (
@@ -272,13 +283,86 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
           <h1 className="text-5xl font-black tracking-tighter italic uppercase">
             {winnerText}
           </h1>
-          <p className="text-zinc-400">Final Score: {gameState.letters[0].join('') || '-'} vs {gameState.letters[1].join('') || '-'}</p>
+          <p className="text-zinc-400">Final Score: {getPlayerName(0)}: {gameState.letters[0].join('') || '-'} vs {getPlayerName(1)}: {gameState.letters[1].join('') || '-'}</p>
           <button
             onClick={onLeave}
             className="px-8 py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all active:scale-95"
           >
             Back to Menu
           </button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (gameState.phase === 'intermission') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-zinc-950 text-white">
+        {/* Background Video Elements */}
+        <div className="fixed inset-0 grid grid-cols-2 opacity-20 blur-xl">
+          <video ref={remoteVideo1Ref} autoPlay playsInline className="w-full h-full object-cover" />
+          <video ref={isSpectator ? remoteVideo2Ref : localVideoRef} autoPlay playsInline muted={!isSpectator} className="w-full h-full object-cover" />
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="relative w-full max-w-2xl bg-zinc-900/60 backdrop-blur-3xl border border-zinc-800 rounded-[3rem] p-12 shadow-[0_0_100px_rgba(0,0,0,0.5)] space-y-12 text-center overflow-hidden"
+        >
+          {/* Progress ring for 10s countdown */}
+          <div className="absolute top-0 left-0 w-full h-1 bg-zinc-800">
+             <motion.div 
+               initial={{ width: "100%" }}
+               animate={{ width: "0%" }}
+               transition={{ duration: 10, ease: "linear" }}
+               className="h-full bg-indigo-500"
+             />
+          </div>
+
+          <div className="space-y-4">
+            <div className="inline-block px-4 py-1.5 bg-indigo-500/10 rounded-full border border-indigo-500/20 mb-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-400">Intermission</span>
+            </div>
+            <h2 className="text-4xl font-black italic uppercase tracking-tighter">Preparing Next Turn</h2>
+            <div className="flex items-center justify-center gap-4 text-7xl font-black font-mono tracking-tighter text-white">
+               {gameState.timer}
+               <span className="text-2xl text-zinc-500 -ml-2">s</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-12 py-10 border-y border-zinc-800/50">
+            <div className="space-y-4">
+              <div className="text-[10px] font-black uppercase tracking-widest text-zinc-500">{getPlayerName(0)}</div>
+              <div className="flex justify-center gap-2">
+                {'SKATE'.split('').map((l, i) => (
+                  <span key={i} className={cn(
+                    "w-11 h-11 flex items-center justify-center rounded-2xl text-xl font-black transition-all duration-500",
+                    gameState.letters[0].includes(l) ? "bg-red-500 text-white shadow-[0_0_30px_rgba(239,68,68,0.4)] scale-110" : "bg-zinc-800/50 text-zinc-700"
+                  )}>{l}</span>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-4">
+              <div className="text-[10px] font-black uppercase tracking-widest text-zinc-500">{getPlayerName(1)}</div>
+              <div className="flex justify-center gap-2">
+                {'SKATE'.split('').map((l, i) => (
+                  <span key={i} className={cn(
+                    "w-11 h-11 flex items-center justify-center rounded-2xl text-xl font-black transition-all duration-500",
+                    gameState.letters[1].includes(l) ? "bg-red-500 text-white shadow-[0_0_30px_rgba(239,68,68,0.4)] scale-110" : "bg-zinc-800/50 text-zinc-700"
+                  )}>{l}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-2">
+            <div className="flex items-center justify-center gap-2 text-zinc-400">
+              <Users className="w-4 h-4" />
+              <p className="font-medium">
+                Up next: <span className="text-indigo-400 font-bold">{getPlayerName(gameState.turn)}</span> setting trick
+              </p>
+            </div>
+          </div>
         </motion.div>
       </div>
     );
@@ -301,9 +385,13 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
         {/* Extra Life Message for E */}
         {!gameState.message && (
           (() => {
-            const activePlayerIndex = gameState.phase === 'replicating' ? (1 - gameState.turn) : gameState.turn;
-            const isEAtRisk = gameState.letters[activePlayerIndex].length === 4;
-            const attempt = gameState.eAttempts[activePlayerIndex];
+            const isReplicating = gameState.phase === 'replicating';
+            if (!isReplicating) return null;
+
+            const replicatorIndex = 1 - gameState.turn;
+            const isEAtRisk = gameState.letters[replicatorIndex].length === 4;
+            const attempt = gameState.eAttempts[replicatorIndex];
+            
             if (isEAtRisk) {
               return (
                 <motion.div
@@ -338,7 +426,7 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
               "text-[10px] font-bold uppercase tracking-tighter mt-1 px-2 py-0.5 rounded w-fit",
               isSpectator ? "bg-zinc-800 text-zinc-400" : "bg-indigo-500/20 text-indigo-400"
             )}>
-              {isSpectator ? 'Spectator' : `Player ${myIndex + 1}`}
+              {isSpectator ? 'Spectator' : getPlayerName(myIndex)}
             </div>
           </div>
         </div>
@@ -348,7 +436,7 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
           <div className="flex gap-4">
             <div className="text-right">
               <div className="text-[10px] uppercase text-zinc-500 font-bold">
-                {isSpectator ? 'Player 1' : 'You'}
+                {isSpectator ? getPlayerName(0) : 'You'}
               </div>
               <div className="flex gap-1">
                 {'SKATE'.split('').map((l, i) => (
@@ -361,7 +449,7 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
             </div>
             <div className="text-left">
               <div className="text-[10px] uppercase text-zinc-500 font-bold">
-                {isSpectator ? 'Player 2' : 'Opponent'}
+                {isSpectator ? getPlayerName(1) : getPlayerName(opponentIndex)}
               </div>
               <div className="flex gap-1">
                 {'SKATE'.split('').map((l, i) => (
@@ -406,7 +494,7 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
             className={cn("w-full h-full object-cover", !isSpectator && "scale-x-[-1]")}
           />
           <div className="absolute bottom-4 left-4 px-3 py-1 bg-black/50 backdrop-blur-md rounded-full text-xs font-medium border border-white/10">
-            {isSpectator ? 'Player 2' : 'You'}
+            {isSpectator ? getPlayerName(1) : getPlayerName(myIndex)}
           </div>
           {!isSpectator && (
             <div className="absolute bottom-4 right-4 flex gap-2">
@@ -447,8 +535,8 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
                     <h3 className="text-xs uppercase font-black tracking-widest text-indigo-400">
                       {gameState.phase === 'setting' ? 'Setting Trick' : 'Replicating Trick'}
                     </h3>
-                    <p className="text-xl font-bold">
-                      {gameState.turn === 0 ? 'Player 1' : 'Player 2'}'s Turn
+                    <p className="text-xl font-bold truncate max-w-[200px]">
+                      {getPlayerName(gameState.phase === 'replicating' ? 1 - gameState.turn : gameState.turn)}'s Turn
                     </p>
                   </div>
                   <div className={cn(
@@ -462,56 +550,51 @@ export default function Game({ roomId, role, onLeave }: GameProps) {
 
                 {/* Phase Specific Content */}
                 <div className="min-h-[80px] flex items-center justify-center">
-                  {gameState.phase === 'setting' ? (
-                    isMyTurn && !isSpectator ? (
-                      <div className="flex w-full justify-center">
+                  <div className="text-center space-y-6 w-full">
+                    {/* Judge Controls */}
+                    {((gameState.phase === 'setting' && !isMyTurn) || (gameState.phase === 'replicating' && isMyTurn)) && !isSpectator && (
+                      <div className="grid grid-cols-3 gap-3">
                         <button
-                          onClick={setTrick}
-                          className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold text-lg shadow-lg shadow-indigo-500/20 transition-all active:scale-95 flex items-center gap-3"
+                          onClick={() => evaluate('valid')}
+                          className="flex flex-col items-center gap-2 p-4 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded-2xl border border-emerald-500/20 transition-all active:scale-95"
                         >
                           <Check className="w-6 h-6" />
-                          TRICK SET
+                          <span className="text-xs font-bold uppercase">Valid</span>
+                        </button>
+                        <button
+                          onClick={() => evaluate('invalid')}
+                          className="flex flex-col items-center gap-2 p-4 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-2xl border border-red-500/20 transition-all active:scale-95"
+                        >
+                          <X className="w-6 h-6" />
+                          <span className="text-xs font-bold uppercase">Fail</span>
+                        </button>
+                        <button
+                          onClick={() => evaluate('repeat')}
+                          className="flex flex-col items-center gap-2 p-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-2xl border border-zinc-700 transition-all active:scale-95"
+                        >
+                          <RotateCcw className="w-6 h-6" />
+                          <span className="text-xs font-bold uppercase">Repeat</span>
                         </button>
                       </div>
-                    ) : (
-                      <p className="text-zinc-400 italic">Waiting for {gameState.turn === 0 ? 'Player 1' : 'Player 2'} to set a trick...</p>
-                    )
-                  ) : (
-                    <div className="text-center space-y-6 w-full">
-                      {/* Evaluation Controls */}
-                      {isMyTurn && !isSpectator && (
-                        <div className="grid grid-cols-3 gap-3">
-                          <button
-                            onClick={() => evaluate('valid')}
-                            className="flex flex-col items-center gap-2 p-4 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded-2xl border border-emerald-500/20 transition-all active:scale-95"
-                          >
-                            <Check className="w-6 h-6" />
-                            <span className="text-xs font-bold uppercase">Valid</span>
-                          </button>
-                          <button
-                            onClick={() => evaluate('invalid')}
-                            className="flex flex-col items-center gap-2 p-4 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-2xl border border-red-500/20 transition-all active:scale-95"
-                          >
-                            <X className="w-6 h-6" />
-                            <span className="text-xs font-bold uppercase">Fail</span>
-                          </button>
-                          <button
-                            onClick={() => evaluate('repeat')}
-                            className="flex flex-col items-center gap-2 p-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-2xl border border-zinc-700 transition-all active:scale-95"
-                          >
-                            <RotateCcw className="w-6 h-6" />
-                            <span className="text-xs font-bold uppercase">Repeat</span>
-                          </button>
-                        </div>
-                      )}
-                      {!isMyTurn && !isSpectator && (
-                        <p className="text-zinc-400 italic text-lg">Do the trick! Opponent will judge you.</p>
-                      )}
-                      {isSpectator && (
-                        <p className="text-zinc-400 italic">Watching {gameState.turn === 0 ? 'Player 1' : 'Player 2'} replicate the trick...</p>
-                      )}
-                    </div>
-                  )}
+                    )}
+                    
+                    {/* Performer Status */}
+                    {((gameState.phase === 'setting' && isMyTurn) || (gameState.phase === 'replicating' && !isMyTurn)) && !isSpectator && (
+                      <div className="space-y-2 animate-pulse">
+                        <p className="text-indigo-400 font-black uppercase tracking-widest text-lg">Your Turn: Perform!</p>
+                        <p className="text-zinc-500 text-sm">Opponent is watching and will judge you.</p>
+                      </div>
+                    )}
+
+                    {isSpectator && (
+                      <p className="text-zinc-400 italic">
+                        {gameState.phase === 'setting' 
+                          ? `Watching ${getPlayerName(gameState.turn)} set a trick...`
+                          : `Watching ${getPlayerName(1 - gameState.turn)} replicate the trick...`
+                        }
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </motion.div>
